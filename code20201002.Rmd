@@ -1,0 +1,174 @@
+---
+title: "Untitled"
+author: "ximan liu"
+date: "2020/9/16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+setwd("D:/D/data/kaggle/")
+library(data.table)
+campaign_table <- fread("campaign_table.csv",header=T)
+coupon_redempt <- fread("coupon_redempt.csv",header=T)
+coupon <- fread("coupon.csv",header=T)
+transaction_data <- fread("transaction_data.csv",header=T)
+campaign_desc<-fread("campaign_desc.csv",header = T,sep=",")
+product<-fread("product.csv",header = T,sep=",")
+causal_data <- fread("causal_data.csv",header = T)
+```
+
+1.基本探索
+============
+```{r}
+{
+  #campaign_desc
+  campaign_desc
+  campaign_desc$duration <- campaign_desc$END_DAY - campaign_desc$START_DAY
+  ##campaign 最少持续32天，中位数是38天，均值是47天，最大值是161天
+  df1 <- campaign_desc %>% summarise(lable="start day",mins=min(START_DAY),means=mean(START_DAY),meds=median(START_DAY),maxs=max(START_DAY))
+  df1
+  df <-df1
+  df
+  df1 <- campaign_desc %>% summarise(lable="end day",mins=min(END_DAY),means=mean(END_DAY),meds=median(END_DAY),maxs=max(END_DAY))
+  df1
+  df <- rbind(df,df1)
+  df
+  df1 <- campaign_desc %>% summarise(lable="duration",mins=min(duration),means=mean(duration),meds=median(duration),maxs=max(duration))
+  df <- rbind(df,df1)
+  df
+  write.csv(df,file = "D:/D/data/kaggle/describe01.csv",row.names = F)
+  sd(campaign_desc$duration)
+  
+  #
+  str(campaign_desc)
+  length(unique(campaign_desc$DESCRIPTION))#3种type，30个campaign
+  campaign_desc %>% group_by(CAMPAIGN) %>% summarise(unique(DESCRIPTION))
+  table(campaign_desc$DESCRIPTION)# A5 B19 C6
+
+}
+
+{#campaign_table
+  campaign_table
+  tips(campaign_table$household_key)#1584户参加了活动
+  summary(campaign_table$household_key)
+  hist(campaign_table$household_key)
+  campaign_table %>% group_by(CAMPAIGN) %>% summarise(tips(household_key),unique(DESCRIPTION))
+}
+
+
+{
+  coupon
+  length(unique(coupon$COUPON_UPC))
+  length(unique(coupon$CAMPAIGN))
+  
+  coupon <- left_join(coupon,campaign_desc,by="CAMPAIGN")
+  coupon
+  coupon %>% group_by(DESCRIPTION) %>% summarise(tips(COUPON_UPC))#每种type的活动发了多少种COUPON_UPC
+  coupon %>% group_by(DESCRIPTION) %>% summarise(length(COUPON_UPC))#每种type的活动发了多少张COUPON_UPC
+  coupon %>% group_by(CAMPAIGN) %>% summarise(length(COUPON_UPC))#每种CAMPAIGN的活动发了多少张COUPON_UPC
+}
+
+{#causal_data
+  causal_data
+  unique(causal_data$mailer)
+  unique(causal_data$display)
+  tips(causal_data$PRODUCT_ID)#68377
+  table(which(is.na(causal_data$mailer)))
+  tips(causal_data$WEEK_NO)#93周
+  
+}
+
+tips <- function(data){length(unique(data))}
+
+coupon_redempt
+tips(coupon_redempt$COUPON_UPC)
+coupon_redempt %>% group_by(CAMPAIGN) %>% summarise(tips(household_key))#每个活动有多少人兑换
+coupon_redempt %>% group_by(CAMPAIGN) %>% summarise(length(COUPON_UPC))#每个活动有多少张优惠票
+tips(coupon_redempt$household_key)
+
+{#transaction_data
+  transaction_data
+  summary(transaction_data$DAY)
+  tips(transaction_data$household_key)#2500户买东西的，但只有1584户参加了活动
+  tips(transaction_data$PRODUCT_ID)#92339
+  summary(transaction_data$COUPON_MATCH_DISC)
+  
+  x <- subset(transaction_data,COUPON_DISC < 0)#
+  tips(x$household_key)#1858,超过了参加活动的用户
+  y <- anti_join(x,campaign_table,by="household_key")#没参加活动的用户
+  y
+  which(campaign_table$household_key==315)#e.g.
+  which(coupon$PRODUCT_ID==1012941)
+  coupon[90515,]
+  
+  
+  x <- subset(transaction_data,COUPON_MATCH_DISC < 0)
+  tips(x$household_key)
+  
+  tips(transaction_data$DAY)#711天
+  tips(transaction_data$WEEK_NO)#102周
+  
+  
+}
+
+
+
+
+
+product
+tips(product$PRODUCT_ID)#92353
+
+
+
+```
+
+```{r}
+# 计算每种促销活动的优惠劵兑换率
+df <- campaign_table %>%
+  group_by(CAMPAIGN) %>%
+  summarise(household_num=length(unique(household_key)))
+df2 <- coupon_redempt %>%
+  group_by(CAMPAIGN) %>%
+  summarise(household_redem=length(unique(household_key))) %>%
+  left_join(df) %>%
+  group_by(CAMPAIGN) %>%
+  summarise(redem_prop=household_redem/household_num)
+
+df2
+
+         # 计算自变量：参与促销的商品规模、品牌占比
+x1<- coupon %>%
+  left_join(product) %>%
+  group_by(CAMPAIGN) %>%
+  summarise(product_qty=length(unique(PRODUCT_ID)),department_qty=length(unique(DEPARTMENT)),commodity_qty=length(unique(COMMODITY_DESC)),prop_National=sum(BRAND=="National")/length(BRAND))
+# 计算自变量：参与促销的商品平均销量
+x2 <- transaction_data %>%
+  group_by(PRODUCT_ID) %>%
+  summarise(qty=sum(QUANTITY)) 
+x2<-left_join(coupon,x2) %>%
+  group_by(CAMPAIGN) %>%
+  summarise(qty=mean(qty,na.rm = T))
+# 计算自变量：持续时间、促销类型、参与家庭数
+x3 <- campaign_desc %>%
+  group_by(CAMPAIGN) %>%
+  summarise(type=DESCRIPTION,duration=END_DAY-START_DAY)
+x4 <- campaign_table %>%
+  group_by(CAMPAIGN) %>%
+  summarise(household_num=length(unique(household_key))) %>%
+  left_join(x3) %>%
+  left_join(x2) %>%
+  left_join(x1) %>%
+  left_join(df2) %>%
+  select(-1)
+```
+```{r}
+# 使用回归
+model1<-lm(redem_prop~.,data = x4)
+summary(model1)
+```
+
