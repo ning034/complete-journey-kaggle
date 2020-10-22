@@ -134,6 +134,10 @@
     model2 <- lm(new_data$meanshare ~ x)#问题：平方项与一次项的相关性，造成的回归共线性的问题，怎么理解？
     summary(model2) 
     
+    #测试“:”符号是什么意思
+    test <- lm(meanshare ~ meandis:COMMODITY_DESC + meandis2:COMMODITY_DESC , data=new_data)
+    summary(test)
+    
     #输出结果
     j <-seq(1,60,by=2)
     result <- c()
@@ -225,6 +229,7 @@
     cat_data$household <- ifelse(cat_data$COMMODITY_DESC %in% household,1,0)
     cat_data$other <- ifelse(cat_data$COMMODITY_DESC %in% other,1,0)
     cat_data
+    write.csv(cat_data,file="D:/D/data/kaggle/model3_data.csv",row.names = F)
     
     #回归数据
     acv <- cat_data$meandis * cat_data[,c(7,9:10,12:15)]#去除一个虚拟变量11和16
@@ -257,10 +262,101 @@
 
 
 {#品牌模型####
-    
-    #连接品牌#即制造商
     new_data
     
+    #连接品牌#即制造商
+    mf <- df[,c(.(MANUFACTURER=unique(MANUFACTURER))),by=c("year","PRODUCT_ID","COMMODITY_DESC")]
+    mf
+    brand_data <- left_join(new_data,mf,by=c("year","PRODUCT_ID","COMMODITY_DESC"))
+    
+    #品牌排名
+    mfrank <- df[,c(.(mfsales=sum(SALES_VALUE))),by=c("year","COMMODITY_DESC","MANUFACTURER")]
+    mfrank <- mfrank[order(year,COMMODITY_DESC,mfsales,decreasing = T),]
+    mfrank <- mfrank %>% group_by(year,COMMODITY_DESC) %>% mutate(rank=1:length(MANUFACTURER))
+    #as.data.frame(table(mfrank$COMMODITY_DESC,mfrank$year))#查看品类有多少制造商(品牌),最少的4个，最多的几百个
+    mfrank
+    
+    #排名转换
+    w <- which(mfrank$rank > 9)
+    mfrank$rank[w] <- 10 
+    mfrank$rank <- as.factor(mfrank$rank)
+    rm(w)
+    gc()
+    mfrank <- mfrank[,-4]
+    mfrank
+    
+    #新的回归数据
+    brand_data <- left_join(brand_data,mfrank,by=c("year","MANUFACTURER","COMMODITY_DESC"))
+    brand_data
+    #brand_data <- fread("model4_data.csv",header = T)
+    #brand_data$rank <- as.factor(brand_data$rank)
+    #write.csv(brand_data,file="D:/D/data/kaggle/model4_data.csv",row.names = F)
+    
+    #为了保证后续输出，将排名为3以后的定义为4
+    {
+        brand_data$rank <- as.character(brand_data$rank)
+        brand_data$rank <- as.numeric(brand_data$rank)
+        w <- which(brand_data$rank > 3)
+        brand_data$rank[w] <- 4
+        brand_data$rank <- as.factor(brand_data$rank)
+        brand_data
+    }
+    
+    #输出结果
+    model4 <- lm(meanshare ~ meandis:COMMODITY_DESC:rank + meandis2:COMMODITY_DESC:rank,data=brand_data)
+    summary(model4)
+    
+    #zz <- summary(model4)
+    #output4 <- as.data.frame(zz$coefficients)
+    #output4 <- as.data.table(output4)
+    #output4
+    #提取行名
+    #x <- dimnames(zz$cov.unscaled)
+    #x <- x[[1]]
+    
+    #library(broom)
+    #tidy(model4) 
+    #有缺失值是prettify不能用
+    output4 <- prettify(summary(model4))
+    output4 <- output4[-1,]
+    head(output4)
+    output4$Estimate <- round(output4$Estimate,5)
+    output4$`t value` <- round(output4$`t value`,1)
+    output4$Estimate <- format(output4$Estimate,scientific = F)
+    output4$Estimate <- paste(output4$Estimate,output4$`   `,sep="")
+    output4 <- output4[,-c(7,8)]
+    output4
+    
+    #提取变量名
+    w1 <- regexpr("_",output4$` `)
+    w2 <- regexpr("[0-9]",output4$` `)
+    output4$cat <- substr(output4$` `,w1+1,w2-6)
+    head(output4)
+    
+    result4 <- data.frame(cat=output4$cat[1:30],acv_1=output4$Estimate[1:30],acv2_1=output4$Estimate[121:150],acv_2=output4$Estimate[31:60],acv2_2=output4$Estimate[151:180],acv_3=output4$Estimate[61:90],acv2_3=output4$Estimate[181:210],acv_4=output4$Estimate[91:120],acv2_4=output4$Estimate[211:240])
+    result4$cat <- gsub("DESC","",result4$cat)
+    result4
+    write.csv(result4,file="D:/D/data/kaggle/output4.csv",row.names = F)
+    xtable(result4)
+    #install.packages("stargazer")
+    #output4 <- prettify(zz, signif.stars = getOption("show.signif.stars"))
+    
+    #convex
+    convex <- result4[,-c(2,4,6,8)]
+    convex$acv2_1 <- as.character(convex$acv2_1)
+    convex$acv2_2 <- as.character(convex$acv2_2)
+    convex$acv2_3 <- as.character(convex$acv2_3)
+    convex$acv2_4 <- as.character(convex$acv2_4)
+    convex[c(11,12,15,20),]$acv2_1 <- "NO"
+    convex[-c(11,12,15,20),]$acv2_1 <- "YES"
+    convex[c(1,6,7,12,17,27),]$acv2_2 <- "NO"
+    convex[-c(1,6,7,12,17,27),]$acv2_2 <- "YES"
+    convex[c(2,6,7,14,16,17,19,20,22,27,28,30),]$acv2_3 <- "NO"
+    convex[-c(2,6,7,14,16,17,19,20,22,27,28,30),]$acv2_3<- "YES"
+    convex[c(8,12,17,19,22,24,26,27,30),]$acv2_4 <- "NO"
+    convex[-c(8,12,17,19,22,24,26,27,30),]$acv2_4<- "YES"
+    convex
+    xtable(convex)
 }
 
 
