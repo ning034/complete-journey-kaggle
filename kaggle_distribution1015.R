@@ -4,6 +4,7 @@
     library(dplyr)
     #install.packages("papeR")
     library(papeR)
+    library(tidyverse)
 }
 
 {#交易数据
@@ -360,6 +361,204 @@
 }
 
 
-{#伪R^2计算
+{#伪R^2计算####
+    model4_data <- fread("model4_data.csv",header = T)
+    #为了保证后续输出，将排名为3以后的定义为4
+    {
+        model4_data$rank <- as.character(model4_data$rank)
+        model4_data$rank <- as.numeric(model4_data$rank)
+        w <- which(model4_data$rank > 3)
+        model4_data$rank[w] <- 4
+        model4_data$rank <- as.factor(model4_data$rank)
+        model4_data
+    }
+    train_data <- subset(model4_data,year==1)
+    valid_data <- subset(model4_data,year==2)
     
+    {#train model4
+        model4 <- lm(meanshare ~ meandis:COMMODITY_DESC:rank + meandis2:COMMODITY_DESC:rank,data=train_data)
+        summary(model4)
+    }
+    
+    #预测
+    fits <- predict(model4,valid_data)
+    valid_data$fits <- fits
+    valid_data
+    
+    #计算伪R^2
+    valid_data <- valid_data %>% group_by(COMMODITY_DESC,MANUFACTURER) %>% mutate(mean=mean(meanshare))
+    valid_data$rank <- as.character(valid_data$rank)
+    valid_data$prederror <- (valid_data$fits - valid_data$meanshare) /  valid_data$meanshare
+    
+    #提出异常的
+    w <- which(valid_data$meanshare==0)
+    valid_data <- valid_data[-w,]
+    
+    
+    cat <- unique(valid_data$COMMODITY_DESC)
+    rk <- unique(valid_data$rank)
+    
+    result1 <-c()
+    result <- c()
+    
+    for(i in 1:30){
+        for(j in 1:4){
+            z <- subset(valid_data,COMMODITY_DESC==cat[i] & rank == rk[j] )
+            x <- t(z$meanshare-z$fits) %*% (z$meanshare-z$fits)
+            y <- t(z$meanshare-z$mean) %*% (z$meanshare-z$mean)
+            result1 <- data.frame(cat=cat[i],rank=rk[j],r2=1-x/y,mean_prederror=mean(z$prederror))
+            result <- rbind(result,result1)
+        }
+    }
+    
+    #生成R2
+    r2 <- spread(result[,c(1,2,3)],rank,r2)
+    r2 <- select(r2,c(1,2,4,5,3))
+    r2
+    setnames(r2,c("cat","1_r2","2_r2","3_r2","4_r2"))
+    r2$`1_r2` <- round(r2$`1_r2`,2)
+    r2$`2_r2` <- round(r2$`2_r2`,2)
+    r2$`3_r2` <- round(r2$`3_r2`,2)
+    r2$`4_r2` <- round(r2$`4_r2`,2)
+    
+    #生成预测误差
+    prederror <- spread(result[,c(1,2,4)],rank,mean_prederror)
+    prederror <- select(prederror,c(1,2,4,5,3))
+    setnames(prederror,c("cat","1_pe","2_pe","3_pe","4_pe"))
+    
+    #修改输出格式
+    prederror$`1_pe` <- round(prederror$`1_pe`,2)
+    prederror$`2_pe` <- round(prederror$`2_pe`,2)
+    prederror$`3_pe` <- round(prederror$`3_pe`,2)
+    prederror$`4_pe` <- round(prederror$`4_pe`,2)
+    prederror
+    prederror$`1_pe` <- prederror$`1_pe` * 100
+    prederror$`2_pe` <- prederror$`2_pe` * 100
+    prederror$`3_pe` <- prederror$`3_pe` * 100
+    prederror$`4_pe` <- prederror$`4_pe` * 100
+    prederror$`1_pe` <- paste(prederror$`1_pe`,"%",sep="")
+    prederror$`2_pe` <- paste(prederror$`2_pe`,"%",sep="")
+    prederror$`3_pe` <- paste(prederror$`3_pe`,"%",sep="")
+    prederror$`4_pe` <- paste(prederror$`4_pe`,"%",sep="")
+    prederror
+    
+    output5 <- cbind(r2,prederror)
+    output5 <- output5[,-6]
+    output5
+}
+
+{#忘记是预测新SKU了-重算####
+    train_data
+    valid_data
+    new_sku <- anti_join(valid_data,train_data,by="PRODUCT_ID")
+    new_sku <- as.data.table(new_sku)
+    part1 <- new_sku[,c(.(newsku_num=length(unique(PRODUCT_ID))),.(newsku_avg_acv=mean(meandis)),.(newsku_avg_share=mean(meanshare))),by=c("COMMODITY_DESC","rank")]
+    part1
+    part1_1 <- spread(part1[,c(1,2,3)],rank,newsku_num)
+    part1_2<- spread(part1[,c(1,2,4)],rank,newsku_avg_acv)
+    part1_3<- spread(part1[,c(1,2,5)],rank,newsku_avg_share)
+    part1_all <- cbind(part1_1,part1_2,part1_3)
+    part1_all <- part1_all[,-c(6,11)]
+    part1_all
+    setnames(part1_all,c("cat","1_num","2_num","3_num","4_num","1_macv","2_macv","3_macv","4_macv","1_ms","2_ms","3_ms","4_ms"))
+    part1_all[,c(6:13)] <- round(part1_all[,c(6:13)],2)
+    
+    #预测
+    fits <- predict(model4,new_sku)
+    new_sku$fits <- fits
+    new_sku
+    
+    #计算预测误差
+    new_sku <- new_sku %>% group_by(COMMODITY_DESC,MANUFACTURER) %>% mutate(mean=mean(meanshare))
+    new_sku$rank <- as.character(new_sku$rank)
+    new_sku$prederror <- (new_sku$fits - new_sku$meanshare) /  new_sku$meanshare
+    
+    
+    cat <- unique(new_sku$COMMODITY_DESC)
+    rk <- unique(new_sku$rank)
+    
+    result1 <-c()
+    result <- c()
+    
+    for(i in 1:30){
+        for(j in 1:4){
+            z <- subset(new_sku,COMMODITY_DESC==cat[i] & rank == rk[j] )
+            x <- t(z$meanshare-z$fits) %*% (z$meanshare-z$fits)
+            y <- t(z$meanshare-z$mean) %*% (z$meanshare-z$mean)
+            result1 <- data.frame(cat=cat[i],rank=rk[j],r2=1-x/y,mean_prederror=mean(z$prederror))
+            result <- rbind(result,result1)
+        }
+    }
+    
+    result
+    #生成R2
+    r2 <- spread(result[,c(1,2,3)],rank,r2)
+    r2 <- select(r2,c(1,2,4,5,3))
+    r2
+    setnames(r2,c("cat","1_r2","2_r2","3_r2","4_r2"))
+    r2$`1_r2` <- round(r2$`1_r2`,2)
+    r2$`2_r2` <- round(r2$`2_r2`,2)
+    r2$`3_r2` <- round(r2$`3_r2`,2)
+    r2$`4_r2` <- round(r2$`4_r2`,2)
+    r2
+    
+    #生成预测误差
+    prederror <- spread(result[,c(1,2,4)],rank,mean_prederror)
+    prederror <- select(prederror,c(1,2,4,5,3))
+    setnames(prederror,c("cat","1_pe","2_pe","3_pe","4_pe"))
+    prederror
+    
+    #修改输出格式
+    prederror$`1_pe` <- round(prederror$`1_pe`,2)
+    prederror$`2_pe` <- round(prederror$`2_pe`,2)
+    prederror$`3_pe` <- round(prederror$`3_pe`,2)
+    prederror$`4_pe` <- round(prederror$`4_pe`,2)
+    prederror
+    prederror$`1_pe` <- prederror$`1_pe` * 100
+    prederror$`2_pe` <- prederror$`2_pe` * 100
+    prederror$`3_pe` <- prederror$`3_pe` * 100
+    prederror$`4_pe` <- prederror$`4_pe` * 100
+    prederror$`1_pe` <- paste(prederror$`1_pe`,"%",sep="")
+    prederror$`2_pe` <- paste(prederror$`2_pe`,"%",sep="")
+    prederror$`3_pe` <- paste(prederror$`3_pe`,"%",sep="")
+    prederror$`4_pe` <- paste(prederror$`4_pe`,"%",sep="")
+    prederror
+    
+    output5 <- cbind(r2,prederror)
+    output5 <- output5[,-6]
+    output5
+    
+    output5 <- left_join(part1_all,output5,by="cat")
+    output5 <- select(output5,c(1,2,6,10,14,18,3,7,11,15,19,4,8,12,16,20,5,9,13,17,21))
+    output5
+    
+    #计算上面的prederror，先不加百分号，这样能计算中位数，之后在算一遍
+    fc <- function(data){median(data,na.rm=T)}
+    md <- apply(output5[,-1],2,fc)
+    md <- as.matrix(md,ncol=20)
+    md <- as.data.frame(t(md))
+    md$cat <- "median"
+    output5 <- rbind(output5,md)
+    output5
+    #write.csv(output5,file="D:/D/data/kaggle/output5.csv",row.names = F)
+    xtable(output5)
+    
+    {#预测的图形:BATH TISSUES -leader  ; CANDY - PACKAGED - 2nd;  FLUID MILK PRODUCTS - 3rd;
+        pic1 <- subset(new_sku,COMMODITY_DESC=="BATH TISSUES" & rank==1)
+        pic1_ori <- subset(train_data,COMMODITY_DESC=="BATH TISSUES" & MANUFACTURER==764)
+        unique(pic1$MANUFACTURER)#764
+        ggplot(pic1,aes(meandis,meanshare))+geom_point()+geom_smooth(data=pic1_ori,aes(meandis,meanshare),se=F)+labs(x="acv",y="share")+theme_bw()
+        
+        pic2 <- subset(new_sku,COMMODITY_DESC=="CANDY - PACKAGED" & rank==2)
+        unique(pic2$MANUFACTURER)#857
+        pic2_ori <- subset(train_data,COMMODITY_DESC=="CANDY - PACKAGED" & MANUFACTURER==857)
+        ggplot(pic2,aes(meandis,meanshare))+geom_point()+geom_smooth(data=pic2_ori,aes(meandis,meanshare),se=F)+labs(x="acv",y="share")+theme_bw()
+        
+        pic3 <- subset(new_sku,COMMODITY_DESC=="FLUID MILK PRODUCTS" & rank==3)
+        unique(pic3$MANUFACTURER)#1126
+        pic3_ori <- subset(train_data,COMMODITY_DESC=="FLUID MILK PRODUCTS" & MANUFACTURER==906)
+        ggplot(pic3,aes(meandis,meanshare))+geom_point()+geom_smooth(data=pic3_ori,aes(meandis,meanshare),se=F)+labs(x="acv",y="share")+theme_bw()
+        
+        
+    }
 }
